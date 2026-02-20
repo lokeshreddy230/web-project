@@ -114,7 +114,7 @@ const ChatInterface: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/chat/completions`, {
+            const response = await fetch(`${api.defaults.baseURL}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
