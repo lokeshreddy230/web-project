@@ -6,13 +6,17 @@ from app.schemas import chat as chat_schemas
 from app.services.llm.providers import LLMProvider, LLMFactory
 from app.db import models
 from typing import AsyncGenerator
+import re
+import uuid
+from app.services.memory.vector_store import vector_store
 
 router = APIRouter()
 
 async def stream_and_save(
     generator: AsyncGenerator[str, None], 
     db: Session, 
-    conversation_id: int
+    conversation_id: int,
+    user_id: int
 ):
     full_response = ""
     try:
@@ -28,6 +32,13 @@ async def stream_and_save(
         )
         db.add(db_message)
         db.commit()
+
+        # Extract and Save Memories
+        memory_matches = re.findall(r"\[MEMORY: (.*?)\]", full_response)
+        for fact in memory_matches:
+            print(f"Saving memory: {fact}")
+            await vector_store.add_memory(str(uuid.uuid4()), fact, user_id)
+
     except Exception as e:
         print(f"Error saving stream: {e}")
         # Optionally log error
@@ -61,13 +72,17 @@ async def chat_completion(
     # 2. Save User Message
     if request.messages:
         last_message = request.messages[-1]
+        
+        # Retrieval: Search memory for context
+        memories = await vector_store.search_memory(last_message.content, current_user.id)
+        memory_context = "\n".join([f"- {m['text']}" for m in memories])
+
         if last_message.role == "user":
             user_msg = models.Message(
                 conversation_id=conversation_id,
                 role="user",
                 content=last_message.content
             )
-            db.add(user_msg)
             db.add(user_msg)
             db.commit()
 
@@ -111,15 +126,29 @@ async def chat_completion(
     tools = list(tool_registry._tools.values())
     
     # Convert messages to dict format
-    # TODO: Fetch history from DB if needed, for now using request messages
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    # Inject System Prompt with Memory Instructions and Context
+    system_prompt = (
+        "You are a helpful AI assistant called PocketPaw.\n"
+        "You have a long-term memory. If the user asks you to remember something or provides personal properties (like name, location, preferences), output a memory tag at the end of your response like this: [MEMORY: User's name is John].\n"
+        "If the user asks a question, answer it. Use the provided context if relevant.\n\n"
+        f"Context from Memory:\n{memory_context}"
+    )
+    
+    # Check if system message exists, otherwise insert
+    if messages and messages[0]['role'] == 'system':
+        messages[0]['content'] = system_prompt # Override existing
+    else:
+        messages.insert(0, {"role": "system", "content": system_prompt})
 
     if request.stream:
         return StreamingResponse(
             stream_and_save(
                 provider.generate_stream(messages, request.model, tools=tools),
                 db,
-                conversation_id
+                conversation_id,
+                current_user.id
             ),
             media_type="text/event-stream"
         )
@@ -135,4 +164,10 @@ async def chat_completion(
         db.add(db_message)
         db.commit()
         
+        # Extract and Save Memories (Non-stream)
+        memory_matches = re.findall(r"\[MEMORY: (.*?)\]", content)
+        for fact in memory_matches:
+            print(f"Saving memory: {fact}")
+            await vector_store.add_memory(str(uuid.uuid4()), fact, current_user.id)
+
         return {"content": content, "conversation_id": conversation_id}

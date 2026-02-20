@@ -29,27 +29,24 @@ class VectorStore:
         except Exception as e:
             print(f"Error saving vector store: {e}")
 
-    def _get_embedding(self, text: str) -> List[float]:
+    async def _get_embedding(self, text: str) -> List[float]:
         url = f"{self.base_url}/api/embeddings"
         payload = {
             "model": self.model,
             "prompt": text
         }
         try:
-            # Using sync client for sync method
-            with httpx.Client() as client:
-                response = client.post(url, json=payload, timeout=30.0)
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=30.0)
                 response.raise_for_status()
                 return response.json()["embedding"]
         except Exception as e:
             print(f"Error getting embedding from Ollama: {e}")
-            return [0.0] * 4096  # Llama3 embedding size is 4096 usually. 
-            # Note: dimension depends on model. 
-            # If we return 0 vector, cosine similarity will be 0.
+            return [0.0] * 4096
 
-    def add_memory(self, memory_id: str, text: str, user_id: int, metadata: Dict[str, Any] = {}):
+    async def add_memory(self, memory_id: str, text: str, user_id: int, metadata: Dict[str, Any] = {}):
         # Check if exists and update, or append
-        vector = self._get_embedding(text)
+        vector = await self._get_embedding(text)
         
         # Remove existing if any
         self.delete_memory(memory_id, user_id)
@@ -64,8 +61,8 @@ class VectorStore:
         self.data.append(record)
         self._save()
 
-    def search_memory(self, query: str, user_id: int, n_results: int = 5) -> List[Dict[str, Any]]:
-        query_vector = self._get_embedding(query)
+    async def search_memory(self, query: str, user_id: int, n_results: int = 5) -> List[Dict[str, Any]]:
+        query_vector = await self._get_embedding(query)
         if not self.data:
             return []
 
