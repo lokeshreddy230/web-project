@@ -10,7 +10,7 @@ import SettingsPage from './pages/SettingsPage';
 
 const App = () => {
   return (
-    <Router>
+    <Router basename="/web-project">
       <AuthProvider>
         <Routes>
           <Route path="/" element={<Layout />}>
